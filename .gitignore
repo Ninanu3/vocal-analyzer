@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# 환경변수 / 인증 (절대 커밋 금지)
+.env
+*.env
+service_account.json
+credentials.json
+token.json
+
+# 설정 (개인 정보 포함)
+config.ini
+
+# 의존성 설치 플래그
+.deps_installed
+
+# 분석 결과 / 로그
+reports/
+vocal_log.csv
+*.log
+
+# 임시 파일
+/tmp/
+*.tmp
+*.flac
+*.wav
+*.mp3
+
+# PyInstaller
+*.spec
+build/
+dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Windows
+Thumbs.db
+Desktop.ini

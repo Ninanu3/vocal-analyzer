@@ -1,0 +1,23 @@
+# 분석 엔진
+praat-parselmouth==0.4.*
+librosa==0.10.*
+pydub==0.25.*
+numpy==1.*
+soundfile==0.12.*
+
+# Telegram
+python-telegram-bot==20.*
+requests==2.*
+
+# Google
+google-api-python-client==2.*
+google-auth==2.*
+google-auth-httplib2==0.2.*
+
+# 로컬 UI
+customtkinter==5.*
+rich==13.*
+watchdog==4.*
+
+# 유틸
+python-dotenv==1.*
