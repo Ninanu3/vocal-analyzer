@@ -56,9 +56,11 @@ GitHub Releases: https://github.com/Ninanu3/vocal-analyzer/releases
 
 ## 버전 다운로드
 
-| 버전 | 날짜 | 다운로드 |
-|------|------|---------|
-| [v1.0.0](https://github.com/Ninanu3/vocal-analyzer/releases/tag/v1.0.0) | 2026-04-15 | [vocal-analyzer.exe](https://github.com/Ninanu3/vocal-analyzer/releases/download/v1.0.0/vocal-analyzer.exe) |
+> Python 설치 불필요. 다운로드 후 더블클릭하면 바로 실행됩니다.
+
+| 버전 | 날짜 | EXE 다운로드 | 크기 |
+|------|------|-------------|------|
+| [v1.0.0](https://github.com/Ninanu3/vocal-analyzer/releases/tag/v1.0.0) | 2026-04-15 | **[⬇ vocal-analyzer.exe](https://github.com/Ninanu3/vocal-analyzer/releases/download/v1.0.0/vocal-analyzer.exe)** | 149 MB |
 
 ---
 
