@@ -7,6 +7,7 @@
 - **MINOR**: 새 기능 추가 (하위 호환 유지)
 - **PATCH**: 버그 수정 / 문서 수정
 
+GitHub 저장소: https://github.com/Ninanu3/vocal-analyzer  
 GitHub Releases: https://github.com/Ninanu3/vocal-analyzer/releases
 
 ---
