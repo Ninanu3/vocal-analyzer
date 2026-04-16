@@ -165,6 +165,82 @@ def _build_advice(j_ok, sh_ok, h_ok, jitter, shimmer, hnr) -> list[str]:
 
 
 # ──────────────────────────────────────────────
+# 구간별 문제 탐지 섹션
+# ──────────────────────────────────────────────
+def _fmt_time(sec: float) -> str:
+    """초 → M:SS 포맷."""
+    m = int(sec) // 60
+    s = int(sec) % 60
+    return f"{m}:{s:02d}"
+
+
+def _build_problem_spots_section(problem_spots: list[dict]) -> list[str]:
+    lines = ["━━ 구간별 문제 탐지 ━━━━━━━━━━━━━━"]
+
+    if not problem_spots:
+        lines.append("✅ 특이 구간 없음")
+        return lines
+
+    type_emoji = {
+        "jitter": "📳",
+        "hnr": "😮‍💨",
+        "register_break": "🎭",
+        "nasal": "👃",
+    }
+    severity_emoji = {
+        "위험": "🔴",
+        "경고": "⚠️",
+        "참고": "💡",
+    }
+
+    for spot in problem_spots:
+        t = _fmt_time(spot.get("time_sec", 0.0))
+        sev = spot.get("severity", "참고")
+        stype = spot.get("type", "")
+        detail = spot.get("detail", "")
+        s_icon = severity_emoji.get(sev, "💡")
+        t_icon = type_emoji.get(stype, "❓")
+        lines.append(f"{s_icon} {t}  {t_icon} {detail}")
+
+    return lines
+
+
+# ──────────────────────────────────────────────
+# 음역대별 분석 섹션
+# ──────────────────────────────────────────────
+def _jitter_zone_icon(jitter: float) -> str:
+    if jitter <= 1.04: return "✅"
+    if jitter <= 1.5:  return "🟡"
+    return "⚠️"
+
+
+def _hnr_zone_icon(hnr: float) -> str:
+    if hnr >= 20.0: return "✅"
+    if hnr >= 15.0: return "🟡"
+    return "⚠️"
+
+
+def _build_pitch_zone_section(pitch_zone_stats: dict) -> list[str]:
+    lines = ["━━ 음역대별 분석 ━━━━━━━━━━━━━━━━"]
+
+    zone_order = ["저음", "중음", "고음"]
+    for zone_name in zone_order:
+        zone = pitch_zone_stats.get(zone_name)
+        if zone is None:
+            continue
+        note_range = zone.get("range", "?~?")
+        count = zone.get("count", 0)
+        j = zone.get("jitter", 0.0)
+        h = zone.get("hnr", 0.0)
+        j_icon = _jitter_zone_icon(j)
+        h_icon = _hnr_zone_icon(h)
+        lines.append(f"{zone_name} ({note_range}, {count}구간)")
+        lines.append(f"  떨림 {j:.2f}% {j_icon}  /  맑기 {h:.1f}dB {h_icon}")
+
+    return lines
+
+
+# ──────────────────────────────────────────────
 # 공개 API
 # ──────────────────────────────────────────────
 def build_message(
@@ -226,6 +302,12 @@ def build_message(
         f"  ↳ {_formant_desc(f1, f2, gender)}",
     ]
 
+    # (신규) 음역대별 분석 — pitch_zone_stats 있을 때만
+    pitch_zone_stats = result.get("pitch_zone_stats")
+    if pitch_zone_stats is not None:
+        lines.append("")
+        lines += _build_pitch_zone_section(pitch_zone_stats)
+
     # 노래 모드 추가
     if mode == "song":
         held = result.get("held_note_count", 0)
@@ -246,6 +328,11 @@ def build_message(
                 f"베이스라인 대비:",
                 f"  떨림 {dj:+.2f}% {j_tr}  /  음량 {dsh:+.2f}% {sh_tr}  /  맑기 {dh:+.1f}dB {h_tr}",
             ]
+
+    # (신규) 구간별 문제 탐지 — 항상 표시
+    problem_spots = result.get("problem_spots", [])
+    lines.append("")
+    lines += _build_problem_spots_section(problem_spots)
 
     # 개인 평균
     if personal_avg:
