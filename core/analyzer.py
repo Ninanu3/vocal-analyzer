@@ -35,8 +35,8 @@ JITTER_OUTLIER_PCT = 2.0    # 이상치 필터 기준 (%)
 HNR_OUTLIER_DB     = 5.0    # 이상치 필터 기준 (dB)
 VALID_RATIO_MIN    = 0.50   # 유효 구간 비율이 이 값 미만이면 재녹음 필요
 
-HELD_MIN_SEC       = 1.0    # held note 최소 길이 (초)
-HELD_F0_STD_MAX    = 5.0    # held note 판정용 f0 표준편차 최대 (Hz)
+HELD_MIN_SEC       = 0.8    # held note 최소 길이 (초)
+HELD_F0_STD_MAX    = 20.0   # held note 판정용 f0 표준편차 최대 (Hz) — 자연 노래 기준
 
 SILENCE_TRIM_SEC   = 0.3    # 앞뒤 무음 trim 길이 (초)
 TARGET_SR          = 44100  # 목표 샘플링 레이트
@@ -54,6 +54,10 @@ EMPTY_RESULT = {
     "problem_spots": [],
     "pitch_zone_stats": None,
     "f2_std": 0.0,
+    "voice_breaks":    [],    # 목소리 갈라짐 타임스탬프
+    "fatigue":         None,  # 피로도 분석
+    "breath_pattern":  None,  # 호흡 패턴
+    "vibrato":         None,  # 비브라토 분석
 }
 
 
@@ -215,8 +219,8 @@ def _apply_outlier_filter(metrics_list: list[dict], total_count: int) -> tuple[d
 # ──────────────────────────────────────────────
 def _run_pyin(wav_path: str):
     """
-    librosa.pyin으로 f0, voiced_flag, frame_times, y, sr 반환.
-    반환: (f0, voiced_flag, frame_times, y, sr)
+    librosa.pyin으로 f0, voiced_flag, voiced_prob, frame_times, y, sr 반환.
+    반환: (f0, voiced_flag, voiced_prob, frame_times, y, sr)
     """
     import librosa
 
@@ -224,7 +228,7 @@ def _run_pyin(wav_path: str):
     hop_length = 512
     frame_length = 2048
 
-    f0, voiced_flag, _ = librosa.pyin(
+    f0, voiced_flag, voiced_prob = librosa.pyin(
         y,
         fmin=librosa.note_to_hz("C2"),
         fmax=librosa.note_to_hz("C6"),
@@ -237,7 +241,7 @@ def _run_pyin(wav_path: str):
         np.arange(len(f0)), sr=sr, hop_length=hop_length
     )
 
-    return f0, voiced_flag, frame_times, y, sr
+    return f0, voiced_flag, voiced_prob, frame_times, y, sr
 
 
 # ──────────────────────────────────────────────
@@ -458,6 +462,239 @@ def _compute_pitch_zone_stats(seg_data: list[dict]) -> dict | None:
 
 
 # ──────────────────────────────────────────────
+# 갈라짐 탐지
+# ──────────────────────────────────────────────
+def _detect_voice_breaks(f0, voiced_flag, voiced_prob, frame_times) -> list[dict]:
+    """
+    짧은 무성 구간(0.05~0.5초)이 유성음 사이에 끼어 있으면 갈라짐으로 판정.
+    반환: [{"time_sec", "duration_sec", "note", "zone_hint"}, ...]
+    """
+    MIN_GAP = 0.05   # 50ms 미만은 무시 (측정 오차)
+    MAX_GAP = 0.5    # 500ms 초과는 의도적 쉼표
+    MIN_VOICED_CONTEXT = 0.3  # 앞뒤 이 시간 이상 유성음이 있어야 갈라짐으로 판정
+
+    # voiced 구간 찾기
+    segments = []  # (start_idx, end_idx, is_voiced)
+    in_voiced = bool(voiced_flag[0])
+    seg_start = 0
+    for i in range(1, len(voiced_flag)):
+        if bool(voiced_flag[i]) != in_voiced:
+            segments.append((seg_start, i - 1, in_voiced))
+            seg_start = i
+            in_voiced = bool(voiced_flag[i])
+    segments.append((seg_start, len(voiced_flag) - 1, in_voiced))
+
+    breaks = []
+    for idx, (s, e, is_v) in enumerate(segments):
+        if is_v:
+            continue
+        dur = frame_times[e] - frame_times[s]
+        if dur < MIN_GAP or dur > MAX_GAP:
+            continue
+        # 앞뒤 voiced context 확인
+        has_before = idx > 0 and segments[idx-1][2] and \
+                     (frame_times[segments[idx-1][1]] - frame_times[segments[idx-1][0]]) >= MIN_VOICED_CONTEXT
+        has_after  = idx < len(segments)-1 and segments[idx+1][2] and \
+                     (frame_times[segments[idx+1][1]] - frame_times[segments[idx+1][0]]) >= MIN_VOICED_CONTEXT
+        if not (has_before and has_after):
+            continue
+
+        # 앞쪽 voiced 구간의 마지막 f0로 음이름 추정
+        before_seg = segments[idx-1] if idx > 0 else None
+        note = "?"
+        zone_hint = "중음"
+        if before_seg:
+            f0_slice = [float(f0[i]) for i in range(before_seg[0], before_seg[1]+1)
+                       if bool(voiced_flag[i]) and not np.isnan(float(f0[i]))]
+            if f0_slice:
+                median_f0 = float(np.median(f0_slice[-10:]))  # 마지막 10프레임
+                note = _hz_to_note(median_f0)
+                zone_hint = "저음" if median_f0 < 200 else ("고음" if median_f0 > 350 else "중음")
+
+        breaks.append({
+            "time_sec":    round(float(frame_times[s]), 2),
+            "duration_sec": round(dur, 2),
+            "note":         note,
+            "zone_hint":    zone_hint,
+        })
+
+    # 1초 이내 중복 제거
+    filtered, last_t = [], -999.0
+    for b in sorted(breaks, key=lambda x: x["time_sec"]):
+        if b["time_sec"] - last_t > 1.0:
+            filtered.append(b)
+            last_t = b["time_sec"]
+
+    return filtered[:10]
+
+
+# ──────────────────────────────────────────────
+# 피로도 분석
+# ──────────────────────────────────────────────
+def _analyze_fatigue(seg_data: list[dict]) -> dict | None:
+    """
+    전반부 vs 후반부 세그먼트의 Jitter/HNR 비교 → 피로도 판정.
+    세그먼트 4개 이상일 때만 의미있음.
+    """
+    if len(seg_data) < 4:
+        return None
+
+    mid = len(seg_data) // 2
+    first_half  = seg_data[:mid]
+    second_half = seg_data[mid:]
+
+    def avg(segs, key):
+        vals = [s[key] for s in segs if s.get(key, 0) > 0]
+        return float(np.mean(vals)) if vals else 0.0
+
+    j1, j2 = avg(first_half, "jitter"),  avg(second_half, "jitter")
+    h1, h2 = avg(first_half, "hnr"),     avg(second_half, "hnr")
+
+    dj = round(j2 - j1, 4)
+    dh = round(h2 - h1, 2)
+
+    if dj > 0.2 or dh < -1.5:
+        verdict = "피로" if (dj > 0.3 or dh < -2.5) else "경미한 피로"
+    elif dj < -0.1 and dh > 0.5:
+        verdict = "워밍업됨"
+    else:
+        verdict = "안정"
+
+    return {
+        "jitter_first":  round(j1, 4),
+        "jitter_second": round(j2, 4),
+        "hnr_first":     round(h1, 2),
+        "hnr_second":    round(h2, 2),
+        "jitter_delta":  dj,
+        "hnr_delta":     dh,
+        "verdict":       verdict,
+    }
+
+
+# ──────────────────────────────────────────────
+# 호흡 패턴 분석
+# ──────────────────────────────────────────────
+def _analyze_breath_pattern(voiced_flag, frame_times) -> dict | None:
+    """
+    0.3~2.0초 무성 구간을 호흡으로 판정.
+    """
+    MIN_BREATH = 0.25
+    MAX_BREATH = 2.0
+
+    breaths = []
+    in_gap = False
+    gap_start = 0.0
+
+    for t, v in zip(frame_times, voiced_flag):
+        if not bool(v):
+            if not in_gap:
+                in_gap = True
+                gap_start = float(t)
+        else:
+            if in_gap:
+                dur = float(t) - gap_start
+                if MIN_BREATH <= dur <= MAX_BREATH:
+                    breaths.append({"time_sec": round(gap_start, 2), "duration_sec": round(dur, 2)})
+                in_gap = False
+
+    if not breaths:
+        return None
+
+    # 프레이즈 길이 계산
+    phrase_lens = []
+    for i in range(1, len(breaths)):
+        gap = breaths[i]["time_sec"] - (breaths[i-1]["time_sec"] + breaths[i-1]["duration_sec"])
+        if gap > 0:
+            phrase_lens.append(gap)
+
+    avg_phrase = round(float(np.mean(phrase_lens)), 1) if phrase_lens else 0.0
+
+    # 짧은 프레이즈(<3초) 사이의 호흡 = 중간 호흡 (호흡 지지 부족 신호)
+    mid_phrase_count = sum(1 for p in phrase_lens if 0 < p < 3.0)
+
+    return {
+        "count":             len(breaths),
+        "avg_phrase_sec":    avg_phrase,
+        "mid_phrase_count":  mid_phrase_count,
+        "breaths":           breaths[:8],
+    }
+
+
+# ──────────────────────────────────────────────
+# 비브라토 분석
+# ──────────────────────────────────────────────
+def _analyze_vibrato(f0, voiced_flag, frame_times, held_segments) -> dict | None:
+    """
+    held note 구간 f0에서 비브라토 분석.
+    비브라토: 4~8Hz 주기의 f0 진동.
+    """
+    VIBRATO_MIN_HZ  = 4.0
+    VIBRATO_MAX_HZ  = 8.0
+    VIBRATO_MIN_EXT = 0.08   # 최소 0.08반음 진동폭 이상이어야 비브라토로 판정
+
+    # hop_length/sr 계산 (프레임 간격)
+    if len(frame_times) < 2:
+        return None
+    dt = float(frame_times[1] - frame_times[0])  # 초 단위
+
+    rates, extents, vibrato_segs = [], [], 0
+
+    for start, end, _ in held_segments:
+        # 해당 구간 f0 추출
+        mask = (frame_times >= start) & (frame_times <= end)
+        seg_f0 = np.array([float(f0[i]) for i in range(len(f0))
+                           if mask[i] and bool(voiced_flag[i]) and not np.isnan(float(f0[i]))])
+
+        if len(seg_f0) < 16:   # FFT 최소 길이
+            continue
+
+        median_f0 = float(np.median(seg_f0))
+        if median_f0 <= 0:
+            continue
+
+        # 반음 단위 편차
+        semitones = 12 * np.log2(seg_f0 / median_f0)
+        semitones -= semitones.mean()
+
+        # FFT
+        n = len(semitones)
+        fft_mag = np.abs(np.fft.rfft(semitones))
+        freqs   = np.fft.rfftfreq(n, d=dt)
+
+        vib_mask = (freqs >= VIBRATO_MIN_HZ) & (freqs <= VIBRATO_MAX_HZ)
+        if not vib_mask.any():
+            continue
+
+        peak_idx  = np.argmax(fft_mag[vib_mask])
+        vib_freqs = freqs[vib_mask]
+        vib_mags  = fft_mag[vib_mask]
+
+        rate = float(vib_freqs[peak_idx])
+        extent = float(vib_mags[peak_idx]) / n * 2   # 반음 진폭
+
+        if extent >= VIBRATO_MIN_EXT:
+            rates.append(rate)
+            extents.append(extent)
+            vibrato_segs += 1
+
+    if not rates:
+        return {
+            "has_vibrato":      False,
+            "rate_hz":          0.0,
+            "extent_semitones": 0.0,
+            "coverage_pct":     0,
+        }
+
+    coverage = round(vibrato_segs / max(len(held_segments), 1) * 100)
+    return {
+        "has_vibrato":      True,
+        "rate_hz":          round(float(np.mean(rates)), 2),
+        "extent_semitones": round(float(np.mean(extents)), 3),
+        "coverage_pct":     coverage,
+    }
+
+
+# ──────────────────────────────────────────────
 # problem_spots 빌드
 # ──────────────────────────────────────────────
 def _build_problem_spots(
@@ -558,13 +795,21 @@ def _analyze_baseline(wav_path: str) -> dict:
 
     # 추가 분석 (실패해도 valid=True 유지)
     try:
-        f0, voiced_flag, frame_times, y, sr = _run_pyin(wav_path)
+        f0, voiced_flag, voiced_prob, frame_times, y, sr = _run_pyin(wav_path)
         register_breaks = _detect_register_breaks(f0, voiced_flag, frame_times)
         nasal_spots = _estimate_nasal_spots(y, sr)
         # baseline은 seg_data=[] → Jitter/HNR 기반 spot 없음
         result["problem_spots"] = _build_problem_spots([], register_breaks, nasal_spots)
     except Exception:
         result["problem_spots"] = []
+        f0 = voiced_flag = voiced_prob = frame_times = None
+
+    try:
+        if f0 is not None:
+            result["voice_breaks"]   = _detect_voice_breaks(f0, voiced_flag, voiced_prob, frame_times)
+            result["breath_pattern"] = _analyze_breath_pattern(voiced_flag, frame_times)
+    except Exception:
+        pass
 
     return result
 
@@ -578,7 +823,7 @@ def _analyze_song(wav_path: str) -> dict:
 
     try:
         # 1. pyin 한 번 실행 → f0, y, sr 재사용
-        f0, voiced_flag, frame_times, y, sr = _run_pyin(wav_path)
+        f0, voiced_flag, voiced_prob, frame_times, y, sr = _run_pyin(wav_path)
 
         # 2. held note 구간 추출
         held_segments = _extract_held_segments(f0, voiced_flag, frame_times)
@@ -655,6 +900,26 @@ def _analyze_song(wav_path: str) -> dict:
         result["problem_spots"] = _build_problem_spots(seg_data, register_breaks, nasal_spots)
     except Exception:
         result["problem_spots"] = []
+
+    try:
+        result["voice_breaks"] = _detect_voice_breaks(f0, voiced_flag, voiced_prob, frame_times)
+    except Exception:
+        result["voice_breaks"] = []
+
+    try:
+        result["fatigue"] = _analyze_fatigue(seg_data)
+    except Exception:
+        result["fatigue"] = None
+
+    try:
+        result["breath_pattern"] = _analyze_breath_pattern(voiced_flag, frame_times)
+    except Exception:
+        result["breath_pattern"] = None
+
+    try:
+        result["vibrato"] = _analyze_vibrato(f0, voiced_flag, frame_times, held_segments)
+    except Exception:
+        result["vibrato"] = None
 
     return result
 

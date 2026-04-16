@@ -241,6 +241,98 @@ def _build_pitch_zone_section(pitch_zone_stats: dict) -> list[str]:
 
 
 # ──────────────────────────────────────────────
+# 갈라짐 탐지 섹션
+# ──────────────────────────────────────────────
+def _build_voice_breaks_section(voice_breaks: list) -> list[str]:
+    if not voice_breaks:
+        return ["━━ 갈라짐 탐지 ━━━━━━━━━━━━━━━━━━", "✅ 탐지된 갈라짐 없음"]
+    zone_icon = {"저음": "🔵", "중음": "🟡", "고음": "🔴"}
+    lines = ["━━ 갈라짐 탐지 ━━━━━━━━━━━━━━━━━━"]
+    for b in voice_breaks:
+        icon = zone_icon.get(b.get("zone_hint", "중음"), "⚡")
+        lines.append(
+            f"⚡ {_fmt_time(b['time_sec'])}  {icon}{b['zone_hint']}({b['note']}) "
+            f"— {b['duration_sec']:.2f}초 갈라짐"
+        )
+    return lines
+
+
+# ──────────────────────────────────────────────
+# 비브라토 섹션
+# ──────────────────────────────────────────────
+def _build_vibrato_section(vibrato: dict) -> list[str]:
+    if not vibrato:
+        return []
+    lines = ["━━ 비브라토 분석 ━━━━━━━━━━━━━━━━"]
+    if not vibrato.get("has_vibrato"):
+        lines.append("비브라토 미탐지 — 직선 발성 위주")
+        lines.append("  ↳ 의도적 직선 발성이면 OK, 비브라토 연습 중이라면 계속 훈련 필요")
+        return lines
+    rate = vibrato["rate_hz"]
+    ext  = vibrato["extent_semitones"]
+    cov  = vibrato["coverage_pct"]
+    if 5.0 <= rate <= 7.0:
+        rate_label = f"{rate:.1f}Hz ✅ 정상"
+    elif rate < 5.0:
+        rate_label = f"{rate:.1f}Hz ⚠️ 느림 (wobble 경향)"
+    else:
+        rate_label = f"{rate:.1f}Hz ⚠️ 빠름 (tremolo 경향)"
+    if ext < 0.2:
+        ext_label = f"{ext:.2f}반음 — 거의 없음"
+    elif ext <= 0.8:
+        ext_label = f"{ext:.2f}반음 ✅ 적절"
+    else:
+        ext_label = f"{ext:.2f}반음 ⚠️ 넓음 (음정 불안정)"
+    lines.append(f"속도: {rate_label}")
+    lines.append(f"폭:   {ext_label}")
+    lines.append(f"적용 구간: {cov}%의 held note에서 감지")
+    return lines
+
+
+# ──────────────────────────────────────────────
+# 호흡 패턴 섹션
+# ──────────────────────────────────────────────
+def _build_breath_section(breath_pattern: dict) -> list[str]:
+    if not breath_pattern:
+        return []
+    cnt   = breath_pattern["count"]
+    avg_p = breath_pattern["avg_phrase_sec"]
+    mid   = breath_pattern["mid_phrase_count"]
+    lines = ["━━ 호흡 패턴 ━━━━━━━━━━━━━━━━━━━"]
+    lines.append(f"호흡 횟수: {cnt}회  /  평균 프레이즈: {avg_p:.1f}초")
+    if mid >= 2:
+        lines.append(f"⚠️ 짧은 프레이즈 중간 호흡 {mid}회 — 호흡 지지 부족 가능성")
+        lines.append("  ↳ 복식 호흡 훈련 + 롱 프레이즈 연습 권고")
+    elif avg_p < 4.0:
+        lines.append("⚠️ 프레이즈가 짧음 — 호흡을 자주 쉬고 있어요")
+    else:
+        lines.append("✅ 호흡 패턴 양호")
+    return lines
+
+
+# ──────────────────────────────────────────────
+# 피로도 섹션
+# ──────────────────────────────────────────────
+def _build_fatigue_section(fatigue: dict) -> list[str]:
+    if not fatigue:
+        return []
+    v = fatigue["verdict"]
+    dj = fatigue["jitter_delta"]
+    dh = fatigue["hnr_delta"]
+    icon = {"피로": "🔴", "경미한 피로": "🟡", "워밍업됨": "✅", "안정": "✅"}.get(v, "")
+    lines = [f"━━ 발성 피로도 ━━━━━━━━━━━━━━━━━━",
+             f"{icon} {v}"]
+    lines.append(f"  떨림 변화: {dj:+.3f}%  /  맑기 변화: {dh:+.1f}dB  (전반→후반)")
+    if v == "피로":
+        lines.append("  ↳ 후반부 성대 피로 뚜렷. 쉬고 SOVT 워밍업 후 재도전 권고")
+    elif v == "경미한 피로":
+        lines.append("  ↳ 후반부에 발성이 약간 흔들림. 수분 보충 권고")
+    elif v == "워밍업됨":
+        lines.append("  ↳ 후반부가 더 안정적 — 워밍업이 잘 됐어요")
+    return lines
+
+
+# ──────────────────────────────────────────────
 # 공개 API
 # ──────────────────────────────────────────────
 def build_message(
@@ -345,6 +437,29 @@ def build_message(
             "━━ 내 평균 대비 ━━━━━━━━━━━━━━━━",
             f"떨림 {dj:+.2f}%  /  음량 {dsh:+.2f}%  /  맑기 {dh:+.1f}dB",
         ]
+
+    # 갈라짐 탐지
+    voice_breaks = result.get("voice_breaks", [])
+    lines.append("")
+    lines += _build_voice_breaks_section(voice_breaks)
+
+    # 비브라토
+    vibrato = result.get("vibrato")
+    if vibrato is not None:
+        lines.append("")
+        lines += _build_vibrato_section(vibrato)
+
+    # 호흡 패턴
+    breath = result.get("breath_pattern")
+    if breath is not None:
+        lines.append("")
+        lines += _build_breath_section(breath)
+
+    # 피로도 (노래 모드에서 세그먼트 4개 이상일 때만 나옴)
+    fatigue = result.get("fatigue")
+    if fatigue is not None:
+        lines.append("")
+        lines += _build_fatigue_section(fatigue)
 
     # 코칭 피드백
     lines += [""]

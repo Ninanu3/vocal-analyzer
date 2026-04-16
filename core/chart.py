@@ -212,3 +212,63 @@ def generate_chart(result: dict, prev_zones: dict | None = None) -> bytes | None
     plt.close(fig)
     buf.seek(0)
     return buf.read()
+
+
+def generate_trend_chart(sessions: list[dict]) -> bytes | None:
+    """
+    세션 히스토리로 Jitter/HNR/F2 추이 꺾은선 차트 생성.
+    sessions: storage.get_recent() 반환값 리스트 (오래된 순)
+    """
+    if len(sessions) < 2:
+        return None
+
+    import matplotlib.dates as mdates
+    from datetime import datetime
+
+    dates, jitters, hnrs, f2s = [], [], [], []
+    for s in sessions:
+        try:
+            dt = datetime.strptime(s["date"][:16], "%Y-%m-%d %H:%M")
+        except Exception:
+            continue
+        dates.append(dt)
+        jitters.append(float(s.get("jitter", 0)))
+        hnrs.append(float(s.get("hnr", 0)))
+        f2s.append(float(s.get("f2", 0)))
+
+    if len(dates) < 2:
+        return None
+
+    fig, axes = plt.subplots(3, 1, figsize=(7, 7), sharex=True)
+    fig.patch.set_facecolor(_BG)
+
+    def _plot_line(ax, ys, title, ylabel, good_low, warn, good_val):
+        ax.set_facecolor(_BG)
+        color = _GREEN if good_low else _BLUE
+        ax.plot(dates, ys, color=color, linewidth=2, marker="o", markersize=5, zorder=3)
+        ax.axhline(warn, color=_YELLOW, linestyle="--", linewidth=1, alpha=0.7)
+        ax.axhline(good_val, color=_GREEN, linestyle=":", linewidth=1, alpha=0.6)
+        ax.fill_between(dates, ys, alpha=0.15, color=color)
+        ax.set_title(title, color=_FG, fontsize=11, fontweight="bold")
+        ax.set_ylabel(ylabel, color=_FG, fontsize=9)
+        ax.tick_params(colors=_FG, labelsize=8)
+        for spine in ax.spines.values():
+            spine.set_color("#444466")
+        ax.yaxis.grid(True, color="#333355", linewidth=0.5)
+
+    _plot_line(axes[0], jitters, "Jitter (%)",   "Jitter",  True,  1.04, 0.5)
+    _plot_line(axes[1], hnrs,    "HNR (dB)",     "HNR",     False, 20.0, 25.0)
+    _plot_line(axes[2], f2s,     "F2 / Resonance (Hz)", "F2", False, 1300, 1600)
+
+    axes[2].xaxis.set_major_formatter(mdates.DateFormatter("%m/%d"))
+    plt.setp(axes[2].xaxis.get_majorticklabels(), rotation=30, ha="right", color=_FG, fontsize=8)
+
+    n = len(sessions)
+    fig.suptitle(f"Vocal Progress  (last {n} sessions)", color=_FG, fontsize=12, fontweight="bold")
+    plt.tight_layout()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=130, bbox_inches="tight", facecolor=_BG, edgecolor="none")
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()
