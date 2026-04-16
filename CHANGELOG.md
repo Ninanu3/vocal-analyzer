@@ -12,6 +12,32 @@ GitHub Releases: https://github.com/Ninanu3/vocal-analyzer/releases
 
 ---
 
+## [1.1.0] — 2026-04-16
+
+### 개선 및 버그 수정
+
+#### 버그 수정
+- **무한 분석 루프 수정** — Telegram이 60초마다 webhook을 재시도하는 문제 해결
+  - 백그라운드 스레드로 분석을 처리하고 즉시 HTTP 200 반환
+  - `update_id` 기반 중복 처리 방지 (`_SEEN_UPDATES` set + threading lock)
+
+#### 기능 개선
+- **분석 결과 대폭 강화** (`core/feedback.py`)
+  - 종합 점수(0~100점) + 5단계 등급 표시 (최상/양호/보통/주의/위험)
+  - 항목별 체감 언어 설명 (예: "목소리 떨림 매우 안정적 (프로 수준)")
+  - 프로 가수 기준값 추가 (Jitter <0.5%, Shimmer <2.0%, HNR >25dB)
+  - 프로 수준 달성도 이모지 진행 막대 `[████████░░] 82%`
+  - 공명 특성 분석: 성구(흉성/두성), 공명 위치(밝음/균형/어두움), 비음 경향
+  - 베이스라인 대비 트렌드 표시 (↑악화/↓개선/→유지)
+  - 항목별 맞춤 훈련 권고 (SOVT, 립 트릴, 메사 디 보체 등)
+- **`/help` 명령어 추가** — 각 수치(Jitter/Shimmer/HNR/F1/F2) 상세 설명
+
+#### 기술 변경
+- requirements.txt에서 미사용 패키지 제거 (`google-cloud-firestore`, `python-telegram-bot`)
+- Cloud Function 메모리 2GB 유지 (OOM 방지)
+
+---
+
 ## [1.0.0] — 2026-04-15
 
 ### 첫 번째 정식 릴리스
