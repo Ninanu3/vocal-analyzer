@@ -345,6 +345,10 @@ def build_message(
             f"떨림 {dj:+.2f}%  /  음량 {dsh:+.2f}%  /  맑기 {dh:+.1f}dB",
         ]
 
+    # 코칭 피드백
+    lines += [""]
+    lines += _build_coaching_text(result, thresh, personal_avg, baseline_result)
+
     # 훈련 권고
     lines += ["", "━━ 오늘 권고 ━━━━━━━━━━━━━━━━━━"]
     lines += _build_advice(j_ok, sh_ok, h_ok, jitter, shimmer, hnr)
@@ -353,6 +357,114 @@ def build_message(
     lines += ["", "📖 수치 설명: /help"]
 
     return "\n".join(lines)
+
+
+def _build_coaching_text(
+    result: dict,
+    thresh: dict,
+    personal_avg: dict | None = None,
+    baseline_result: dict | None = None,
+) -> list[str]:
+    """자연어 코칭 피드백 생성."""
+    jitter  = result["jitter"]
+    shimmer = result["shimmer"]
+    hnr     = result["hnr"]
+    f2      = result["f2"]
+    f2_std  = result.get("f2_std", 0.0)
+    zones   = result.get("pitch_zone_stats") or {}
+    spots   = result.get("problem_spots", [])
+
+    lines = []
+
+    # 1. 이전 대비 비교
+    ref = None
+    if baseline_result and baseline_result.get("valid"):
+        ref = baseline_result
+    elif personal_avg:
+        ref = personal_avg
+    if ref:
+        dj = jitter - ref.get("jitter", jitter)
+        dh = hnr    - ref.get("hnr",    hnr)
+        if dj > 0.15:
+            lines.append(f"지난 녹음보다 떨림이 {dj:+.2f}% 늘었어요. 오늘 목 상태를 체크해보세요.")
+        elif dj < -0.15:
+            lines.append(f"지난 녹음보다 떨림이 {abs(dj):.2f}% 줄었어요. 발성이 안정되고 있어요 👍")
+        if dh < -1.5:
+            lines.append(f"소리가 지난 번보다 탁해졌어요. 성대 피로나 수분 부족일 수 있어요.")
+
+    # 2. 공명 위치 (F2)
+    if f2 > 0:
+        if f2 < 1300:
+            lines.append("공명이 목구멍 쪽에 쏠려 있어요. 소리를 앞니 뒤쪽으로 모으는 포워드 포지션 연습이 필요해요.")
+        elif f2 < 1500:
+            lines.append("공명이 약간 뒤쪽에 있어요. 조금 더 앞으로 모아주면 소리가 밝아질 거예요.")
+        elif f2 > 1750:
+            lines.append("공명 포지션이 앞쪽에 잘 잡혀 있어요.")
+
+    # 3. F2 안정성
+    if f2_std > 200:
+        lines.append(f"공명 위치가 녹음 내내 크게 흔들렸어요 (편차 ±{f2_std:.0f}Hz). 발성 포지션이 아직 고정되지 않은 상태예요.")
+    elif f2_std > 120:
+        lines.append(f"공명 위치가 다소 불안정해요 (편차 ±{f2_std:.0f}Hz). 일관된 포지션 유지 연습이 필요해요.")
+
+    # 4. 음역대별 비교
+    if zones:
+        # Jitter zone 비교
+        zone_j = {k: v["jitter"] for k, v in zones.items() if v}
+        if zone_j:
+            worst = max(zone_j, key=zone_j.get)
+            best  = min(zone_j, key=zone_j.get)
+            if zone_j[worst] > zone_j[best] * 1.5 and zone_j[worst] > 0.8:
+                lines.append(f"{best}은 안정적인데 {worst} 구간에서 떨림이 심해져요.")
+
+        # F2 zone 하락 (고음 가면서 공명이 뒤로 물러나는지)
+        zone_f2 = {k: v.get("f2", 0) for k, v in zones.items() if v and v.get("f2", 0) > 0}
+        if "저음" in zone_f2 and "고음" in zone_f2 and zone_f2["저음"] > 0:
+            f2_drop = zone_f2["저음"] - zone_f2["고음"]
+            if f2_drop > 200:
+                lines.append(
+                    f"고음으로 올라갈수록 공명이 뒤로 물러나고 있어요 "
+                    f"({zone_f2['저음']:.0f}Hz→{zone_f2['고음']:.0f}Hz). "
+                    f"고음에서도 앞쪽 공명을 유지하는 게 핵심이에요."
+                )
+
+        # 고음 흉성 밀어올리기 감지 (고음 zone F1 높으면 흉성 유지)
+        high_zone = zones.get("고음")
+        low_zone  = zones.get("저음")
+        if high_zone and low_zone:
+            if high_zone.get("f1", 0) > 620 and low_zone.get("f1", 0) < high_zone.get("f1", 0):
+                lines.append(
+                    "고음 구간에서도 흉성을 밀어올리는 경향이 있어요. "
+                    "이 음역대는 혼성(믹스 보이스)으로 전환하면 더 편하고 안전해요."
+                )
+
+    # 5. 성구 전환
+    breaks = [s for s in spots if s["type"] == "register_break"]
+    if breaks:
+        times = ", ".join(_fmt_time(s["time_sec"]) for s in breaks[:2])
+        lines.append(
+            f"{times} 부근에서 성구 전환(목소리 갈라짐)이 있었어요. "
+            f"이 음 부근이 흉-두성 전환 구간이에요. 믹스 보이스 연습이 필요해요."
+        )
+
+    # 6. 비음
+    nasal = [s for s in spots if s["type"] == "nasal"]
+    if len(nasal) >= 2:
+        lines.append("여러 구간에서 비음이 섞여요. 연구개(목젖)를 올려 비강을 막는 연습이 도움이 돼요.")
+    elif len(nasal) == 1:
+        lines.append("한 구간에서 비음 경향이 있어요.")
+
+    # 7. HNR 낮음
+    if hnr < 18 and hnr > 0:
+        lines.append("전반적으로 소리에 잡음이 많아요. 성대 건강이나 발성 효율을 점검해보세요.")
+
+    if not lines:
+        lines.append(
+            "전반적으로 안정적인 발성이에요. "
+            "공명 포지션을 조금 더 앞으로 모으는 방향으로 발전시켜보세요."
+        )
+
+    return ["━━ 코칭 피드백 ━━━━━━━━━━━━━━━━"] + [f"• {l}" for l in lines]
 
 
 def build_history_message(sessions: list[dict]) -> str:

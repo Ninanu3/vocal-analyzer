@@ -53,6 +53,7 @@ EMPTY_RESULT = {
     "error_msg": None,
     "problem_spots": [],
     "pitch_zone_stats": None,
+    "f2_std": 0.0,
 }
 
 
@@ -444,11 +445,13 @@ def _compute_pitch_zone_stats(seg_data: list[dict]) -> dict | None:
             continue
         f0_list = [d["f0_hz"] for d in items]
         result[zone_name] = {
-            "jitter_avg":  round(float(np.mean([d["jitter"]  for d in items])), 4),
-            "shimmer_avg": round(float(np.mean([d["shimmer"] for d in items])), 4),
-            "hnr_avg":     round(float(np.mean([d["hnr"]     for d in items])), 2),
-            "count":       len(items),
-            "note_range":  f"{_hz_to_note(min(f0_list))}~{_hz_to_note(max(f0_list))}",
+            "jitter":  round(float(np.mean([d["jitter"]  for d in items])), 4),
+            "shimmer": round(float(np.mean([d["shimmer"] for d in items])), 4),
+            "hnr":     round(float(np.mean([d["hnr"]     for d in items])), 2),
+            "f1":      round(float(np.mean([d["f1"] for d in items])), 1),
+            "f2":      round(float(np.mean([d["f2"] for d in items])), 1),
+            "count":   len(items),
+            "range":   f"{_hz_to_note(min(f0_list))}~{_hz_to_note(max(f0_list))}",
         }
 
     return result
@@ -641,6 +644,12 @@ def _analyze_song(wav_path: str) -> dict:
         result["pitch_zone_stats"] = _compute_pitch_zone_stats(seg_data)
     except Exception:
         result["pitch_zone_stats"] = None
+
+    try:
+        f2_vals = [d["f2"] for d in seg_data if d.get("f2", 0) > 0]
+        result["f2_std"] = round(float(np.std(f2_vals)), 1) if len(f2_vals) >= 2 else 0.0
+    except Exception:
+        result["f2_std"] = 0.0
 
     try:
         result["problem_spots"] = _build_problem_spots(seg_data, register_breaks, nasal_spots)
