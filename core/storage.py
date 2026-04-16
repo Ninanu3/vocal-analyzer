@@ -11,6 +11,7 @@ config.ini [storage] type = csv     → 로컬 CSV 파일에 기록
 
 import configparser
 import csv
+import json
 import os
 from datetime import datetime
 from pathlib import Path
@@ -19,7 +20,19 @@ from pathlib import Path
 _HEADERS = [
     "chat_id", "date", "mode",
     "jitter", "shimmer", "hnr", "f1", "f2", "held_note_count",
+    "zones_json",   # pitch_zone_stats JSON
 ]
+
+
+def _parse_zones(s: str) -> dict | None:
+    """JSON 문자열 → dict. 실패 시 None."""
+    try:
+        if not s:
+            return None
+        d = json.loads(s)
+        return d if isinstance(d, dict) and d else None
+    except Exception:
+        return None
 
 
 # ──────────────────────────────────────────────
@@ -56,7 +69,7 @@ class _SheetsStorage:
         res = (
             svc.spreadsheets()
             .values()
-            .get(spreadsheetId=self.sheets_id, range="sessions!A1:I1")
+            .get(spreadsheetId=self.sheets_id, range="sessions!A1:J1")
             .execute()
         )
         if not res.get("values"):
@@ -80,6 +93,7 @@ class _SheetsStorage:
             result.get("f1", 0),
             result.get("f2", 0),
             result.get("held_note_count", 0),
+            json.dumps(result.get("pitch_zone_stats") or {}, ensure_ascii=False),
         ]
         svc.spreadsheets().values().append(
             spreadsheetId=self.sheets_id,
@@ -93,7 +107,7 @@ class _SheetsStorage:
         res = (
             svc.spreadsheets()
             .values()
-            .get(spreadsheetId=self.sheets_id, range="sessions!A2:I")
+            .get(spreadsheetId=self.sheets_id, range="sessions!A2:J")
             .execute()
         )
         rows = res.get("values", [])
@@ -111,6 +125,7 @@ class _SheetsStorage:
                 "f1": float(r[6]),
                 "f2": float(r[7]),
                 "held_note_count": int(r[8]) if r[8] else 0,
+                "pitch_zone_stats": _parse_zones(r[9] if len(r) > 9 else ""),
             }
             for r in recent
         ]
@@ -146,6 +161,7 @@ class _CsvStorage:
             result.get("f1", 0),
             result.get("f2", 0),
             result.get("held_note_count", 0),
+            json.dumps(result.get("pitch_zone_stats") or {}, ensure_ascii=False),
         ]
         with open(self.csv_path, "a", newline="", encoding="utf-8") as f:
             csv.writer(f).writerow(row)
@@ -173,6 +189,7 @@ class _CsvStorage:
                 "f1": float(r["f1"]),
                 "f2": float(r["f2"]),
                 "held_note_count": int(r["held_note_count"]) if r["held_note_count"] else 0,
+                "pitch_zone_stats": _parse_zones(r.get("zones_json", "")),
             }
             for r in recent
         ]

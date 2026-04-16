@@ -249,6 +249,7 @@ def build_message(
     gender: str,
     personal_avg: dict | None = None,
     baseline_result: dict | None = None,
+    prev_zone_stats: dict | None = None,   # 이전 세션 pitch_zone_stats
 ) -> str:
 
     now    = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -347,7 +348,7 @@ def build_message(
 
     # 코칭 피드백
     lines += [""]
-    lines += _build_coaching_text(result, thresh, personal_avg, baseline_result)
+    lines += _build_coaching_text(result, thresh, personal_avg, baseline_result, prev_zone_stats)
 
     # 훈련 권고
     lines += ["", "━━ 오늘 권고 ━━━━━━━━━━━━━━━━━━"]
@@ -364,6 +365,7 @@ def _build_coaching_text(
     thresh: dict,
     personal_avg: dict | None = None,
     baseline_result: dict | None = None,
+    prev_zone_stats: dict | None = None,
 ) -> list[str]:
     """자연어 코칭 피드백 생성."""
     jitter  = result["jitter"]
@@ -464,7 +466,79 @@ def _build_coaching_text(
             "공명 포지션을 조금 더 앞으로 모으는 방향으로 발전시켜보세요."
         )
 
+    # 8. 이전 녹음 대비 음역대별 변화
+    if prev_zone_stats and zones:
+        zone_lines = _build_zone_delta(zones, prev_zone_stats)
+        if zone_lines:
+            lines += zone_lines
+
     return ["━━ 코칭 피드백 ━━━━━━━━━━━━━━━━"] + [f"• {l}" for l in lines]
+
+
+def _build_zone_delta(curr: dict, prev: dict) -> list[str]:
+    """이전 세션 대비 음역대별 변화를 자연어로 설명."""
+    ZONE_ORDER = ["저음", "중음", "고음"]
+
+    # 임계값
+    J_SIG  = 0.15   # Jitter 유의미 변화 (%)
+    H_SIG  = 1.0    # HNR 유의미 변화 (dB)
+    F2_SIG = 80.0   # F2 유의미 변화 (Hz)
+
+    rows = []   # 표 형식 행
+    narr = []   # 자연어 설명
+
+    for zone in ZONE_ORDER:
+        c = curr.get(zone)
+        p = prev.get(zone)
+        if not c or not p:
+            continue
+
+        dj  = c.get("jitter", 0) - p.get("jitter", 0)
+        dh  = c.get("hnr",    0) - p.get("hnr",    0)
+        df2 = c.get("f2",     0) - p.get("f2",     0)
+
+        j_arr  = "↓✅" if dj < -J_SIG else ("↑⚠️" if dj > J_SIG else "→")
+        h_arr  = "↑✅" if dh > H_SIG  else ("↓⚠️" if dh < -H_SIG else "→")
+        f2_arr = "↑" if df2 > F2_SIG else ("↓" if df2 < -F2_SIG else "→")
+
+        rows.append(
+            f"  {zone}  떨림{j_arr}{dj:+.2f}%  맑기{h_arr}{dh:+.1f}dB  공명{f2_arr}{df2:+.0f}Hz"
+        )
+
+        # 자연어 설명 생성
+        improvements = []
+        worsenings   = []
+
+        if dj < -J_SIG:   improvements.append("성대 안정성")
+        elif dj > J_SIG:  worsenings.append("떨림")
+
+        if dh > H_SIG:    improvements.append("발성 효율")
+        elif dh < -H_SIG: worsenings.append("소리 맑기")
+
+        if df2 > F2_SIG:
+            improvements.append("공명 위치(앞으로)")
+        elif df2 < -F2_SIG:
+            worsenings.append(f"공명 위치(뒤로 {abs(df2):.0f}Hz)")
+
+        if improvements and not worsenings:
+            narr.append(f"{zone}에서 {', '.join(improvements)}이 나아졌어요.")
+        elif worsenings and not improvements:
+            narr.append(f"{zone}에서 {', '.join(worsenings)}이 나빠졌어요.")
+        elif improvements and worsenings:
+            narr.append(
+                f"{zone} — {', '.join(improvements)} 개선, "
+                f"{', '.join(worsenings)} 주의."
+            )
+
+    if not rows:
+        return []
+
+    result_lines = ["이전 녹음 대비 변화:"]
+    result_lines += rows
+    if narr:
+        result_lines.append("")
+        result_lines += [f"  • {n}" for n in narr]
+    return result_lines
 
 
 def build_history_message(sessions: list[dict]) -> str:

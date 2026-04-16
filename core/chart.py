@@ -54,10 +54,11 @@ def _zone_color(value: float, low_good: bool, warn: float, bad: float) -> str:
         return _RED
 
 
-def generate_chart(result: dict) -> bytes | None:
+def generate_chart(result: dict, prev_zones: dict | None = None) -> bytes | None:
     """
     발성 분석 결과로 PNG 차트 생성.
     pitch_zone_stats 없으면 None 반환.
+    prev_zones가 있으면 grouped bar로 이전 세션과 비교.
     """
     zones = result.get("pitch_zone_stats")
     if not zones:
@@ -74,6 +75,11 @@ def generate_chart(result: dict) -> bytes | None:
     f2_vals     = [zones[z]["f2"]     if zones.get(z) and zones[z].get("f2", 0) > 0 else None for z in zone_names]
     hnr_vals    = [zones[z]["hnr"]    if zones.get(z) else 0 for z in zone_names]
     has_f2      = any(v is not None and v > 0 for v in f2_vals)
+
+    has_prev = bool(prev_zones)
+    prev_jitter = [prev_zones.get(z, {}).get("jitter", 0) if prev_zones and prev_zones.get(z) else 0 for z in zone_names]
+    prev_hnr    = [prev_zones.get(z, {}).get("hnr",    0) if prev_zones and prev_zones.get(z) else 0 for z in zone_names]
+    prev_f2     = [prev_zones.get(z, {}).get("f2",     0) if prev_zones and prev_zones.get(z) else 0 for z in zone_names]
 
     f2_std = result.get("f2_std", 0)
     score  = result.get("score", None)  # 있으면 표시
@@ -92,7 +98,16 @@ def generate_chart(result: dict) -> bytes | None:
     ax1 = axes[0]
     ax1.set_facecolor(_BG)
     colors_j = [_zone_color(v, True, 1.04, 1.5) for v in jitter_vals]
-    bars = ax1.bar(x, jitter_vals, width=bar_w, color=colors_j, zorder=3)
+    if has_prev:
+        bar_w2 = 0.35
+        bars_p = ax1.bar(x - bar_w2/2, prev_jitter, width=bar_w2,
+                         color=colors_j, alpha=0.4,
+                         label="prev", zorder=2)
+        bars = ax1.bar(x + bar_w2/2, jitter_vals, width=bar_w2,
+                       color=colors_j, label="now", zorder=3)
+        ax1.legend(fontsize=8, facecolor="#2A2A3E", labelcolor=_FG, framealpha=0.8)
+    else:
+        bars = ax1.bar(x, jitter_vals, width=bar_w, color=colors_j, zorder=3)
     ax1.axhline(1.04, color=_YELLOW, linestyle="--", linewidth=1.2, label="Limit 1.04%", zorder=4)
     ax1.axhline(1.5,  color=_RED,    linestyle=":",  linewidth=1.0, label="Warn  1.5%",  zorder=4)
     ax1.set_xticks(x)
@@ -116,7 +131,16 @@ def generate_chart(result: dict) -> bytes | None:
     ax2 = axes[1]
     ax2.set_facecolor(_BG)
     colors_h = [_zone_color(v, False, 20.0, 15.0) for v in hnr_vals]
-    bars2 = ax2.bar(x, hnr_vals, width=bar_w, color=colors_h, zorder=3)
+    if has_prev:
+        bar_w2 = 0.35
+        bars2_p = ax2.bar(x - bar_w2/2, prev_hnr, width=bar_w2,
+                          color=colors_h, alpha=0.4,
+                          label="prev", zorder=2)
+        bars2 = ax2.bar(x + bar_w2/2, hnr_vals, width=bar_w2,
+                        color=colors_h, label="now", zorder=3)
+        ax2.legend(fontsize=8, facecolor="#2A2A3E", labelcolor=_FG, framealpha=0.8)
+    else:
+        bars2 = ax2.bar(x, hnr_vals, width=bar_w, color=colors_h, zorder=3)
     ax2.axhline(20.0, color=_YELLOW, linestyle="--", linewidth=1.2, label="Limit 20dB", zorder=4)
     ax2.axhline(25.0, color=_GREEN,  linestyle=":",  linewidth=1.0, label="Pro   25dB", zorder=4)
     ax2.set_xticks(x)
@@ -144,7 +168,17 @@ def generate_chart(result: dict) -> bytes | None:
             elif v >= 1600:  colors_f2.append(_GREEN)
             elif v >= 1300:  colors_f2.append(_YELLOW)
             else:            colors_f2.append(_RED)
-        bars3 = ax3.bar(x, f2_plot, width=bar_w, color=colors_f2, zorder=3)
+        if has_prev:
+            prev_f2_plot = [v if v else 0 for v in prev_f2]
+            bar_w2 = 0.35
+            bars3_p = ax3.bar(x - bar_w2/2, prev_f2_plot, width=bar_w2,
+                              color=colors_f2, alpha=0.4,
+                              label="prev", zorder=2)
+            bars3 = ax3.bar(x + bar_w2/2, f2_plot, width=bar_w2,
+                            color=colors_f2, label="now", zorder=3)
+            ax3.legend(fontsize=8, facecolor="#2A2A3E", labelcolor=_FG, framealpha=0.8)
+        else:
+            bars3 = ax3.bar(x, f2_plot, width=bar_w, color=colors_f2, zorder=3)
         ax3.axhline(1600, color=_GREEN,  linestyle="--", linewidth=1.2, label="Bright 1600Hz", zorder=4)
         ax3.axhline(1300, color=_RED,    linestyle=":",  linewidth=1.0, label="Dark   1300Hz", zorder=4)
         std_label = f"std ±{f2_std:.0f}Hz" if f2_std > 0 else ""
