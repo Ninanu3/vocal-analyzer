@@ -54,10 +54,12 @@ EMPTY_RESULT = {
     "problem_spots": [],
     "pitch_zone_stats": None,
     "f2_std": 0.0,
-    "voice_breaks":    [],    # 목소리 갈라짐 타임스탬프
-    "fatigue":         None,  # 피로도 분석
-    "breath_pattern":  None,  # 호흡 패턴
-    "vibrato":         None,  # 비브라토 분석
+    "voice_breaks":       [],   # 목소리 갈라짐 타임스탬프
+    "fatigue":            None, # 피로도 분석
+    "breath_pattern":     None, # 호흡 패턴
+    "vibrato":            None, # 비브라토 분석
+    "spectral_centroid":  0.0,  # 음색 무게 (스펙트럼 무게 중심 Hz)
+    "f0_mean":            0.0,  # 유성음 구간 평균 기본주파수 Hz
 }
 
 
@@ -242,6 +244,38 @@ def _run_pyin(wav_path: str):
     )
 
     return f0, voiced_flag, voiced_prob, frame_times, y, sr
+
+
+# ──────────────────────────────────────────────
+# 음색 특성 (spectral centroid + f0_mean)
+# ──────────────────────────────────────────────
+def _compute_voice_features(y, sr, f0, voiced_flag) -> dict:
+    """
+    spectral_centroid: 음색 무게 중심 (Hz). 낮으면 두껍고 어두운 음색, 높으면 얇고 밝은 음색.
+    f0_mean: voiced 구간 평균 기본주파수 (Hz). 성부 추정에 사용.
+    """
+    import librosa
+
+    try:
+        centroid = librosa.feature.spectral_centroid(y=y, sr=sr)[0]
+        sc_mean = float(np.mean(centroid))
+    except Exception:
+        sc_mean = 0.0
+
+    try:
+        voiced_f0 = [
+            float(f0[i])
+            for i in range(len(f0))
+            if bool(voiced_flag[i]) and not np.isnan(float(f0[i])) and float(f0[i]) > 0
+        ]
+        f0_mean = float(np.mean(voiced_f0)) if voiced_f0 else 0.0
+    except Exception:
+        f0_mean = 0.0
+
+    return {
+        "spectral_centroid": round(sc_mean, 1),
+        "f0_mean":           round(f0_mean, 1),
+    }
 
 
 # ──────────────────────────────────────────────
@@ -811,6 +845,13 @@ def _analyze_baseline(wav_path: str) -> dict:
     except Exception:
         pass
 
+    try:
+        if f0 is not None:
+            vf = _compute_voice_features(y, sr, f0, voiced_flag)
+            result.update(vf)
+    except Exception:
+        pass
+
     return result
 
 
@@ -920,6 +961,12 @@ def _analyze_song(wav_path: str) -> dict:
         result["vibrato"] = _analyze_vibrato(f0, voiced_flag, frame_times, held_segments)
     except Exception:
         result["vibrato"] = None
+
+    try:
+        vf = _compute_voice_features(y, sr, f0, voiced_flag)
+        result.update(vf)
+    except Exception:
+        pass
 
     return result
 

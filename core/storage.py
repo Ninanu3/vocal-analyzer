@@ -20,7 +20,9 @@ from pathlib import Path
 _HEADERS = [
     "chat_id", "date", "mode",
     "jitter", "shimmer", "hnr", "f1", "f2", "held_note_count",
-    "zones_json",   # pitch_zone_stats JSON
+    "zones_json",         # pitch_zone_stats JSON  (col 10, index 9)
+    "spectral_centroid",  # 음색 무게 중심 Hz      (col 11, index 10)
+    "f0_mean",            # 평균 기본주파수 Hz      (col 12, index 11)
 ]
 
 
@@ -69,7 +71,7 @@ class _SheetsStorage:
         res = (
             svc.spreadsheets()
             .values()
-            .get(spreadsheetId=self.sheets_id, range="sessions!A1:J1")
+            .get(spreadsheetId=self.sheets_id, range="sessions!A1:L1")
             .execute()
         )
         if not res.get("values"):
@@ -94,6 +96,8 @@ class _SheetsStorage:
             result.get("f2", 0),
             result.get("held_note_count", 0),
             json.dumps(result.get("pitch_zone_stats") or {}, ensure_ascii=False),
+            result.get("spectral_centroid", 0),
+            result.get("f0_mean", 0),
         ]
         svc.spreadsheets().values().append(
             spreadsheetId=self.sheets_id,
@@ -107,7 +111,7 @@ class _SheetsStorage:
         res = (
             svc.spreadsheets()
             .values()
-            .get(spreadsheetId=self.sheets_id, range="sessions!A2:J")
+            .get(spreadsheetId=self.sheets_id, range="sessions!A2:L")
             .execute()
         )
         rows = res.get("values", [])
@@ -116,16 +120,18 @@ class _SheetsStorage:
         recent = matched[-n:]
         return [
             {
-                "chat_id": r[0],
-                "timestamp": r[1],
-                "mode": r[2],
-                "jitter": float(r[3]),
-                "shimmer": float(r[4]),
-                "hnr": float(r[5]),
-                "f1": float(r[6]),
-                "f2": float(r[7]),
-                "held_note_count": int(r[8]) if r[8] else 0,
-                "pitch_zone_stats": _parse_zones(r[9] if len(r) > 9 else ""),
+                "chat_id":           r[0],
+                "timestamp":         r[1],
+                "mode":              r[2],
+                "jitter":            float(r[3]),
+                "shimmer":           float(r[4]),
+                "hnr":               float(r[5]),
+                "f1":                float(r[6]),
+                "f2":                float(r[7]),
+                "held_note_count":   int(r[8]) if r[8] else 0,
+                "pitch_zone_stats":  _parse_zones(r[9] if len(r) > 9 else ""),
+                "spectral_centroid": float(r[10]) if len(r) > 10 and r[10] else 0.0,
+                "f0_mean":           float(r[11]) if len(r) > 11 and r[11] else 0.0,
             }
             for r in recent
         ]
@@ -162,6 +168,8 @@ class _CsvStorage:
             result.get("f2", 0),
             result.get("held_note_count", 0),
             json.dumps(result.get("pitch_zone_stats") or {}, ensure_ascii=False),
+            result.get("spectral_centroid", 0),
+            result.get("f0_mean", 0),
         ]
         with open(self.csv_path, "a", newline="", encoding="utf-8") as f:
             csv.writer(f).writerow(row)
@@ -180,16 +188,18 @@ class _CsvStorage:
         recent = matched[-n:]
         return [
             {
-                "chat_id": r["chat_id"],
-                "timestamp": r["date"],
-                "mode": r["mode"],
-                "jitter": float(r["jitter"]),
-                "shimmer": float(r["shimmer"]),
-                "hnr": float(r["hnr"]),
-                "f1": float(r["f1"]),
-                "f2": float(r["f2"]),
-                "held_note_count": int(r["held_note_count"]) if r["held_note_count"] else 0,
-                "pitch_zone_stats": _parse_zones(r.get("zones_json", "")),
+                "chat_id":           r["chat_id"],
+                "timestamp":         r["date"],
+                "mode":              r["mode"],
+                "jitter":            float(r["jitter"]),
+                "shimmer":           float(r["shimmer"]),
+                "hnr":               float(r["hnr"]),
+                "f1":                float(r["f1"]),
+                "f2":                float(r["f2"]),
+                "held_note_count":   int(r["held_note_count"]) if r["held_note_count"] else 0,
+                "pitch_zone_stats":  _parse_zones(r.get("zones_json", "")),
+                "spectral_centroid": float(r["spectral_centroid"]) if r.get("spectral_centroid") else 0.0,
+                "f0_mean":           float(r["f0_mean"]) if r.get("f0_mean") else 0.0,
             }
             for r in recent
         ]

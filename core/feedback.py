@@ -233,6 +233,37 @@ def _build_advice(j_ok, sh_ok, h_ok, jitter, shimmer, hnr,
 
 
 # ──────────────────────────────────────────────
+# 목소리 타입 한 줄 힌트
+# ──────────────────────────────────────────────
+def _voice_type_hint(result: dict, gender: str) -> str:
+    """단일 세션 f0_mean + spectral_centroid로 간단한 타입 힌트."""
+    f0  = result.get("f0_mean", 0.0)
+    sc  = result.get("spectral_centroid", 0.0)
+    f2  = result.get("f2", 0.0)
+    if f0 <= 0:
+        return ""
+
+    # 성부
+    if gender == "남":
+        if f0 < 115:  vt = "베이스"
+        elif f0 < 155: vt = "바리톤"
+        elif f0 < 185: vt = "바리톤-테너"
+        else:          vt = "테너"
+    else:
+        if f0 < 200:  vt = "알토"
+        elif f0 < 250: vt = "메조소프라노"
+        else:          vt = "소프라노"
+
+    # 음색 무게
+    if sc > 0:
+        if sc < 1500:  wt = "두꺼운 음색"
+        elif sc < 2200: wt = "균형 잡힌 음색"
+        else:           wt = "얇고 밝은 음색"
+        return f"{vt} / {wt}"
+    return vt
+
+
+# ──────────────────────────────────────────────
 # 구간별 문제 탐지 섹션
 # ──────────────────────────────────────────────
 def _fmt_time(sec: float) -> str:
@@ -436,9 +467,16 @@ def build_message(
     score      = _calc_score(jitter, shimmer, hnr, thresh)
     mode_label = "베이스라인" if mode == "baseline" else "노래"
 
+    # 목소리 타입 한 줄 (f0_mean 있을 때만)
+    voice_type_line = _voice_type_hint(result, gender)
+
     lines = [
         f"🎤 발성 분석 [{mode_label}] — {now}",
         f"종합 점수: {score}점  {_score_label(score)}",
+    ]
+    if voice_type_line:
+        lines.append(f"목소리 타입: {voice_type_line}  (세션 누적 시 정밀화)")
+    lines += [
         "",
         "━━ 수치 분석 ━━━━━━━━━━━━━━━━━━",
         f"Jitter   {jitter:.2f}%  {j_icon}",
