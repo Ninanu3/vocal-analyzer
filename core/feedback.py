@@ -120,47 +120,115 @@ def _bar(value: float, target: float, higher_is_better: bool, width: int = 10) -
 # ──────────────────────────────────────────────
 # 훈련 권고
 # ──────────────────────────────────────────────
-def _build_advice(j_ok, sh_ok, h_ok, jitter, shimmer, hnr) -> list[str]:
+def _build_advice(j_ok, sh_ok, h_ok, jitter, shimmer, hnr,
+                  result: dict | None = None) -> list[str]:
     bad = sum([not j_ok, not sh_ok, not h_ok])
 
+    # result에서 컨텍스트 추출
+    _r = result or {}
+    fatigue_d       = _r.get("fatigue") or {}
+    fatigue_verdict = fatigue_d.get("verdict", "") if isinstance(fatigue_d, dict) else ""
+    has_breaks      = bool(_r.get("voice_breaks", []))
+    breath_d        = _r.get("breath_pattern") or {}
+    short_breath    = (
+        breath_d.get("avg_phrase_sec", 99) < 4.0
+        or breath_d.get("mid_phrase_count", 0) >= 2
+    )
+    zones       = _r.get("pitch_zone_stats") or {}
+    zone_jitters = {k: v["jitter"] for k, v in zones.items() if v}
+    worst_zone  = max(zone_jitters, key=zone_jitters.get) if zone_jitters else None
+    vibrato_d   = _r.get("vibrato") or {}
+
     if bad == 0:
-        # 프로 기준과 비교해서 더 구체적인 조언
         lines = ["💪 오늘 권고"]
         tips = []
+
         if jitter > PRO_BENCHMARKS["jitter_pro"]:
-            tips.append("떨림 개선: 립 트릴 스케일 5분")
+            if has_breaks:
+                tips.append("갈라짐이 있었어요 → 호흡 지지를 유지한 상태로 스타카토 릴리즈 5분")
+                tips.append("  ↳ 호흡-성대 협조가 잡히면 갈라짐이 줄고 Jitter도 같이 내려가요")
+            elif worst_zone and zone_jitters[worst_zone] > jitter * 1.4:
+                tips.append(f"{worst_zone} 구간 집중 연습 → 그 음역대 가볍게 허밍 스케일 5분")
+                tips.append(f"  ↳ {worst_zone}에서 성대 접촉이 불안정해요. 허밍으로 포지션을 먼저 잡아요")
+            else:
+                tips.append("떨림 정밀 개선 → 혀 트릴(/r/) 스케일 또는 혀끝 진동 연습 5분")
+                tips.append("  ↳ 조음기관 협조력이 올라가면 성대 진동이 정교해지고 Jitter가 낮아져요")
+
         if shimmer > PRO_BENCHMARKS["shimmer_pro"]:
-            tips.append("음량 안정화: 메사 디 보체(크레셴도-데크레셴도) 연습")
+            if short_breath:
+                tips.append("호흡 지지 강화 → 낮은 볼륨(pp) 롱 노트 유지 10초 × 5회")
+                tips.append("  ↳ 호흡 흐름이 고르면 음압 변동(Shimmer)이 자연스럽게 줄어요")
+            else:
+                tips.append("다이나믹 컨트롤 → pp에서 mf까지 일정 속도로 올리는 크레셴도 연습")
+                tips.append("  ↳ 성대 접촉압의 일관성이 높아지면서 음량 안정성(Shimmer)이 좋아져요")
+
         if hnr < PRO_BENCHMARKS["hnr_pro"]:
-            tips.append("맑기 개선: SOVT(빨대) 워밍업 5분")
+            tips.append("맑기 개선 → SOVT(빨대 발성) 워밍업 5분")
+            tips.append("  ↳ 성대 반폐쇄 상태에서 접촉 효율이 높아지고, 배음이 풍부해져 HNR이 올라가요")
+
+        if vibrato_d.get("has_vibrato") and vibrato_d.get("rate_hz", 0) < 5.0:
+            tips.append("비브라토 속도가 느려요(wobble) → 복부 지지 강화 + 빠른 스타카토 릴리즈 연습")
+            tips.append("  ↳ 지지 근육이 강해지면 비브라토 속도가 올라가요(목표 5~7Hz)")
+
         if not tips:
-            tips.append("프로 수준 유지 중! 고강도 연습 진행 가능")
+            tips.append("프로 수준 유지 중! 레퍼토리 확장이나 고강도 스케일 연습 가능해요")
         for t in tips:
-            lines.append(f"   → {t}")
+            if t.startswith("  ↳"):
+                lines.append(f"   {t}")
+            else:
+                lines.append(f"   → {t}")
         return lines
 
     lines = []
     if bad >= 2:
-        lines.append("⚠️  복합 불안정 — 오늘은 워밍업만 권장")
-        lines.append("   → SOVT(빨대) 5분 + 립 트릴 5분")
-        lines.append("   → 고강도 연습 자제 / 수분 보충")
+        if fatigue_verdict == "피로":
+            lines.append("⚠️  복합 불안정 + 피로 감지 — 오늘은 완전 휴식 권장")
+            lines.append("   → 발성 완전 자제 / 미지근한 물 충분히 / 수면 우선")
+            lines.append("   ↳ 피로한 상태에서 무리하면 성대 결절 위험이 올라가요")
+        else:
+            lines.append("⚠️  복합 불안정 — 오늘은 워밍업만 권장")
+            lines.append("   → SOVT(빨대 발성) 5분 — 성대 부하 없이 혈류만 살리기")
+            lines.append("   ↳ 반폐쇄 상태로 성대 부담을 최소화하면서 점막을 깨워요")
+            lines.append("   → 고강도 연습 자제 / 수분 보충")
         return lines
 
     if not j_ok:
         lines.append("⚠️  떨림 초과 — 성대 진동 불안정")
-        lines.append("   → SOVT(빨대 발성) 5분")
-        lines.append("   → 립 트릴 스케일 5분")
-        lines.append("   → 과긴장 또는 피로 여부 체크")
+        if fatigue_verdict in ("피로", "경미한 피로"):
+            lines.append("   → 피로가 원인일 가능성 높아요 → SOVT(빨대) 5분만")
+            lines.append("   ↳ 피로한 성대에 무리한 트릴은 역효과예요. 빨대 발성이 가장 안전해요")
+            lines.append("   → 고강도 연습 자제 + 충분한 수분 섭취")
+        elif has_breaks:
+            lines.append("   → 갈라짐 동반 떨림 → 호흡부터 체크 (복식호흡 상태로 가볍게 허밍 5분)")
+            lines.append("   ↳ 갈라짐+떨림은 호흡-성대 협조 부족 신호예요. 허밍으로 연결감을 먼저 만들어요")
+        else:
+            lines.append("   → SOVT(빨대 발성) 5분")
+            lines.append("   ↳ 성대 접촉 효율을 높여서 Jitter를 낮춰줘요")
+            lines.append("   → 스타카토 릴리즈 연습 — 짧게 끊어 성대 접촉 타이밍 훈련")
+            lines.append("   ↳ 접촉 타이밍이 정확해지면 사이클 간 편차(Jitter)가 빠르게 감소해요")
+
     if not sh_ok:
         lines.append("⚠️  음량 흔들림 — 호흡 지지 부족")
-        lines.append("   → 허밍 스케일 5분")
-        lines.append("   → 낮은 볼륨 레가토 연습")
-        lines.append("   → 복식호흡 재점검")
+        if short_breath:
+            lines.append("   → 호흡이 짧아요 → 복식호흡 재훈련 우선 (허리 옆 팽창 확인)")
+            lines.append("   ↳ 호흡 지지가 안정되면 성대에 가는 압력이 고르게 되어 Shimmer가 내려가요")
+        else:
+            lines.append("   → 낮은 볼륨(pp) 롱 노트 10초 유지 × 5회")
+            lines.append("   ↳ 일정한 서브글로탈 압력을 유지하는 근육을 훈련해 음량 안정성을 높여요")
+            lines.append("   → 허밍 레가토 스케일 5분")
+            lines.append("   ↳ 공명 활용이 늘면 적은 호흡으로도 음량이 안정되고 Shimmer가 줄어요")
+
     if not h_ok:
         lines.append("⚠️  탁한 소리 — 성대 피로 또는 점막 부종")
-        lines.append("   → 고강도 연습 당일 자제")
-        lines.append("   → 수분 보충 + 충분한 휴식")
-        lines.append("   → 2일 이상 지속 시 음성 전문의 상담")
+        if fatigue_verdict == "피로":
+            lines.append("   → 발성 중단 + 미지근한 물 500mL + 최소 2시간 휴식")
+            lines.append("   ↳ 탁한 소리 + 피로 징후는 점막 부종 신호예요. 쉬면 HNR이 회복돼요")
+        else:
+            lines.append("   → 오늘 고강도 연습 자제")
+            lines.append("   → SOVT(빨대) 지글링 3분 — 저강도 진동으로 점막 컨디셔닝")
+            lines.append("   ↳ 점막 부종이 빠지면 성대 접촉이 깨끗해지고 HNR이 올라가요")
+            lines.append("   → 2일 이상 탁함 지속 시 음성 전문의 상담 권장")
+
     return lines
 
 
@@ -467,7 +535,7 @@ def build_message(
 
     # 훈련 권고
     lines += ["", "━━ 오늘 권고 ━━━━━━━━━━━━━━━━━━"]
-    lines += _build_advice(j_ok, sh_ok, h_ok, jitter, shimmer, hnr)
+    lines += _build_advice(j_ok, sh_ok, h_ok, jitter, shimmer, hnr, result=result)
 
     # /help 안내
     lines += ["", "📖 수치 설명: /help"]
@@ -490,6 +558,7 @@ def _build_coaching_text(
     f2_std  = result.get("f2_std", 0.0)
     zones   = result.get("pitch_zone_stats") or {}
     spots   = result.get("problem_spots", [])
+    sh_ok   = shimmer <= thresh["shimmer_max"]
 
     lines = []
 
@@ -567,19 +636,47 @@ def _build_coaching_text(
     # 6. 비음
     nasal = [s for s in spots if s["type"] == "nasal"]
     if len(nasal) >= 2:
-        lines.append("여러 구간에서 비음이 섞여요. 연구개(목젖)를 올려 비강을 막는 연습이 도움이 돼요.")
+        lines.append(
+            "여러 구간에서 비음이 섞여요. "
+            "연구개(목젖)를 올려 비강을 막는 연습이 도움이 돼요. "
+            "→ 비음이 줄면 소리에 선명도와 울림이 생기고, "
+            "HNR이 올라가며 공명이 입 앞쪽으로 더 잘 모여서 소리가 밝아져요."
+        )
     elif len(nasal) == 1:
-        lines.append("한 구간에서 비음 경향이 있어요.")
+        lines.append(
+            "한 구간에서 비음 경향이 있어요. "
+            "그 음역대를 노래할 때 입천장(연구개)을 들어올리는 느낌을 유지해보세요."
+        )
 
     # 7. HNR 낮음
     if hnr < 18 and hnr > 0:
-        lines.append("전반적으로 소리에 잡음이 많아요. 성대 건강이나 발성 효율을 점검해보세요.")
+        if not sh_ok:
+            lines.append(
+                "소리에 잡음이 많고 음량도 흔들려요. "
+                "호흡 지지가 부족하면 성대가 효율적으로 닫히지 못해서 탁해져요. "
+                "→ 복식호흡 + SOVT 훈련으로 호흡 지지를 잡으면 HNR이 올라가요."
+            )
+        else:
+            lines.append(
+                "전반적으로 소리에 잡음이 많아요. "
+                "성대 점막이 건조하거나 피로한 상태일 때 이런 소리가 나요. "
+                "→ 충분한 수분 + SOVT로 점막을 촉촉하게 유지하면 HNR이 회복돼요."
+            )
 
     if not lines:
-        lines.append(
-            "전반적으로 안정적인 발성이에요. "
-            "공명 포지션을 조금 더 앞으로 모으는 방향으로 발전시켜보세요."
-        )
+        if f2 > 1600:
+            lines.append(
+                "전반적으로 안정적인 발성이에요. "
+                "공명 포지션도 앞쪽에 잘 잡혀 있어요. "
+                "지금 발성 포지션을 기억해두고 고음 구간에서도 유지하는 게 다음 목표예요."
+            )
+        else:
+            lines.append(
+                "전반적으로 안정적인 발성이에요. "
+                "공명을 앞니 뒤쪽(이 공명)으로 더 모아보세요. "
+                "→ 포워드 포지션이 잡히면 소리가 밝아지고 음량도 올라가서 "
+                "덜 힘들이고도 멀리 나가는 소리가 돼요."
+            )
 
     # 8. 이전 녹음 대비 음역대별 변화
     if prev_zone_stats and zones:
