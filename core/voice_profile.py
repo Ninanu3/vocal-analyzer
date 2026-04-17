@@ -8,7 +8,18 @@ recommend_artists(profile, gender) → list of artist dicts
 build_profile_text(profile, recs) → list of str  (feedback용)
 """
 
+import math
 import numpy as np
+
+
+def _hz_to_note_ko(hz: float) -> str:
+    """주파수(Hz) → 한국식 음이름 (예: 146.8 → '3옥타브 레')."""
+    if hz <= 0:
+        return "?"
+    semitones = round(12 * math.log2(hz / 440.0))
+    ko_names  = ["라", "라♯", "시", "도", "도♯", "레", "레♯", "미", "파", "파♯", "솔", "솔♯"]
+    octave    = 4 + (semitones + 9) // 12
+    return f"{octave}옥타브 {ko_names[semitones % 12]}"
 
 # ──────────────────────────────────────────────
 # 분류 임계값
@@ -375,8 +386,8 @@ def build_profile_text(profile: dict, recs: list[dict]) -> list[str]:
     lines.append(f"음색 무게:    {wt}")
     if br: lines.append(f"공명 위치:    {br}")
     if bt: lines.append(f"발성 스타일:  {bt}")
-    if f0   > 0: lines.append(f"평균 음높이:  {f0:.0f}Hz")
-    if sc_v > 0: lines.append(f"음색 중심:    {sc_v:.0f}Hz")
+    if f0   > 0: lines.append(f"평균 음높이:  {_hz_to_note_ko(f0)}  ({f0:.0f}Hz)")
+    if sc_v > 0: lines.append(f"음색 중심:    {sc_v:.0f}Hz  (낮을수록 두꺼운 음색)")
     lines.append(f"신뢰도: {conf}  ({sc}세션 기반)")
 
     if profile.get("voice_type") is None:

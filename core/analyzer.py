@@ -60,6 +60,8 @@ EMPTY_RESULT = {
     "vibrato":            None, # 비브라토 분석
     "spectral_centroid":  0.0,  # 음색 무게 (스펙트럼 무게 중심 Hz)
     "f0_mean":            0.0,  # 유성음 구간 평균 기본주파수 Hz
+    "stable_range":       None, # 안정 음역대 {"low","high","low_hz","high_hz"}
+    "full_range":         None, # 전체 탐지 음역대 (5~95 퍼센타일)
 }
 
 
@@ -67,13 +69,24 @@ EMPTY_RESULT = {
 # 유틸 함수
 # ──────────────────────────────────────────────
 def _hz_to_note(hz: float) -> str:
-    """주파수(Hz) → 음이름 (예: 330.0 → 'E4')."""
+    """주파수(Hz) → 영문 음이름 (예: 330.0 → 'E4')."""
     if hz <= 0:
         return "?"
     semitones = round(12 * math.log2(hz / 440.0))
     names = ["A", "A#", "B", "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#"]
     octave = 4 + (semitones + 9) // 12
     return f"{names[semitones % 12]}{octave}"
+
+
+def _hz_to_note_ko(hz: float) -> str:
+    """주파수(Hz) → 한국식 음이름 (예: 146.8 → '3옥타브 레')."""
+    if hz <= 0:
+        return "?"
+    semitones = round(12 * math.log2(hz / 440.0))
+    # A=0, A#=1, B=2, C=3, C#=4, D=5, D#=6, E=7, F=8, F#=9, G=10, G#=11
+    ko_names = ["라", "라♯", "시", "도", "도♯", "레", "레♯", "미", "파", "파♯", "솔", "솔♯"]
+    octave   = 4 + (semitones + 9) // 12
+    return f"{octave}옥타브 {ko_names[semitones % 12]}"
 
 
 def _moving_avg(arr, w):
@@ -276,6 +289,52 @@ def _compute_voice_features(y, sr, f0, voiced_flag) -> dict:
         "spectral_centroid": round(sc_mean, 1),
         "f0_mean":           round(f0_mean, 1),
     }
+
+
+# ──────────────────────────────────────────────
+# 음역대 계산
+# ──────────────────────────────────────────────
+def _compute_ranges(f0, voiced_flag, held_segments=None) -> dict:
+    """
+    stable_range: 안정된 held note 구간의 최저~최고 (노래 모드) 또는 25~75퍼센타일 (베이스라인).
+    full_range:   유성음 전체의 5~95퍼센타일 — 불안정하게 닿은 음 포함.
+    """
+    voiced_f0 = [
+        float(f0[i]) for i in range(len(f0))
+        if bool(voiced_flag[i]) and not np.isnan(float(f0[i])) and float(f0[i]) > 0
+    ]
+
+    def _rng(lo_hz, hi_hz):
+        return {
+            "low_hz":  round(lo_hz, 1),
+            "high_hz": round(hi_hz, 1),
+            "low":     _hz_to_note(lo_hz),
+            "high":    _hz_to_note(hi_hz),
+            "low_ko":  _hz_to_note_ko(lo_hz),
+            "high_ko": _hz_to_note_ko(hi_hz),
+        }
+
+    result = {"stable": None, "full": None}
+
+    # 전체 음역대 (5~95 퍼센타일)
+    if len(voiced_f0) >= 4:
+        result["full"] = _rng(
+            float(np.percentile(voiced_f0, 5)),
+            float(np.percentile(voiced_f0, 95)),
+        )
+
+    # 안정 음역대
+    if held_segments:
+        f0_meds = [f0_hz for _, _, f0_hz in held_segments]
+        result["stable"] = _rng(min(f0_meds), max(f0_meds))
+    elif len(voiced_f0) >= 4:
+        # 베이스라인: 25~75 퍼센타일 = 중심적으로 사용하는 편안한 음역
+        result["stable"] = _rng(
+            float(np.percentile(voiced_f0, 25)),
+            float(np.percentile(voiced_f0, 75)),
+        )
+
+    return result
 
 
 # ──────────────────────────────────────────────
@@ -852,6 +911,14 @@ def _analyze_baseline(wav_path: str) -> dict:
     except Exception:
         pass
 
+    try:
+        if f0 is not None:
+            ranges = _compute_ranges(f0, voiced_flag, held_segments=None)
+            result["stable_range"] = ranges["stable"]
+            result["full_range"]   = ranges["full"]
+    except Exception:
+        pass
+
     return result
 
 
@@ -965,6 +1032,13 @@ def _analyze_song(wav_path: str) -> dict:
     try:
         vf = _compute_voice_features(y, sr, f0, voiced_flag)
         result.update(vf)
+    except Exception:
+        pass
+
+    try:
+        ranges = _compute_ranges(f0, voiced_flag, held_segments=held_segments)
+        result["stable_range"] = ranges["stable"]
+        result["full_range"]   = ranges["full"]
     except Exception:
         pass
 

@@ -233,34 +233,97 @@ def _build_advice(j_ok, sh_ok, h_ok, jitter, shimmer, hnr,
 
 
 # ──────────────────────────────────────────────
+# Hz → 한국식 음이름 (feedback 내부용)
+# ──────────────────────────────────────────────
+def _hz_to_note_ko(hz: float) -> str:
+    """주파수(Hz) → 한국식 음이름 (예: 146.8 → '3옥타브 레')."""
+    import math
+    if hz <= 0:
+        return "?"
+    semitones = round(12 * math.log2(hz / 440.0))
+    ko_names  = ["라", "라♯", "시", "도", "도♯", "레", "레♯", "미", "파", "파♯", "솔", "솔♯"]
+    octave    = 4 + (semitones + 9) // 12
+    return f"{octave}옥타브 {ko_names[semitones % 12]}"
+
+
+# ──────────────────────────────────────────────
 # 목소리 타입 한 줄 힌트
 # ──────────────────────────────────────────────
 def _voice_type_hint(result: dict, gender: str) -> str:
     """단일 세션 f0_mean + spectral_centroid로 간단한 타입 힌트."""
-    f0  = result.get("f0_mean", 0.0)
-    sc  = result.get("spectral_centroid", 0.0)
-    f2  = result.get("f2", 0.0)
+    f0 = result.get("f0_mean", 0.0)
+    sc = result.get("spectral_centroid", 0.0)
     if f0 <= 0:
         return ""
 
     # 성부
     if gender == "남":
-        if f0 < 115:  vt = "베이스"
+        if f0 < 115:   vt = "베이스"
         elif f0 < 155: vt = "바리톤"
         elif f0 < 185: vt = "바리톤-테너"
         else:          vt = "테너"
     else:
-        if f0 < 200:  vt = "알토"
+        if f0 < 200:   vt = "알토"
         elif f0 < 250: vt = "메조소프라노"
         else:          vt = "소프라노"
 
+    f0_note = _hz_to_note_ko(f0)
+
     # 음색 무게
     if sc > 0:
-        if sc < 1500:  wt = "두꺼운 음색"
+        if sc < 1500:   wt = "두꺼운 음색"
         elif sc < 2200: wt = "균형 잡힌 음색"
         else:           wt = "얇고 밝은 음색"
-        return f"{vt} / {wt}"
-    return vt
+        return f"{vt} / {wt}  (평균 {f0_note})"
+    return f"{vt}  (평균 {f0_note})"
+
+
+# ──────────────────────────────────────────────
+# 음역대 섹션
+# ──────────────────────────────────────────────
+def _build_range_section(result: dict) -> list[str]:
+    """안정 음역대 + 전체 탐지 음역대 섹션."""
+    stable = result.get("stable_range")
+    full   = result.get("full_range")
+    if not stable and not full:
+        return []
+
+    lines = ["━━ 음역대 분석 ━━━━━━━━━━━━━━━━━━"]
+
+    if stable:
+        lo_ko = stable["low_ko"]
+        hi_ko = stable["high_ko"]
+        lo    = stable["low"]
+        hi    = stable["high"]
+        held  = result.get("held_note_count", 0)
+        rel   = "높음" if held >= 5 else "보통" if held >= 2 else "참고용"
+        lines.append(f"✅ 안정 음역대:  {lo_ko} ~ {hi_ko}")
+        lines.append(f"   ({lo} ~ {hi})  / 구간 {held}개 기반, 신뢰도 {rel}")
+
+    if full:
+        lo_ko = full["low_ko"]
+        hi_ko = full["high_ko"]
+        lo    = full["low"]
+        hi    = full["high"]
+        lines.append(f"📊 전체 탐지:   {lo_ko} ~ {hi_ko}")
+        lines.append(f"   ({lo} ~ {hi})  / 불안정 구간 포함 5~95퍼센타일")
+
+    # 안정↔전체 차이 코멘트
+    if stable and full:
+        stable_span = stable["high_hz"] - stable["low_hz"]
+        full_span   = full["high_hz"]   - full["low_hz"]
+        extra_low   = stable["low_hz"]  - full["low_hz"]   # 전체가 더 낮은 만큼
+        extra_high  = full["high_hz"]   - stable["high_hz"] # 전체가 더 높은 만큼
+
+        tips = []
+        if extra_low > 30:
+            tips.append(f"저음 {_hz_to_note_ko(full['low_hz'])} 부근은 불안정하게 탐지됨")
+        if extra_high > 30:
+            tips.append(f"고음 {_hz_to_note_ko(full['high_hz'])} 부근은 불안정하게 탐지됨")
+        if tips:
+            lines.append("  ↳ " + " / ".join(tips))
+
+    return lines
 
 
 # ──────────────────────────────────────────────
@@ -500,6 +563,12 @@ def build_message(
         f"F1 {f1:.0f}Hz / F2 {f2:.0f}Hz",
         f"  ↳ {_formant_desc(f1, f2, gender)}",
     ]
+
+    # 음역대 분석 (stable_range / full_range)
+    range_section = _build_range_section(result)
+    if range_section:
+        lines.append("")
+        lines += range_section
 
     # (신규) 음역대별 분석 — pitch_zone_stats 있을 때만
     pitch_zone_stats = result.get("pitch_zone_stats")
